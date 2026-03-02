@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "Kwami Navigation",
+  "version": "1.0.0",
+  "description": "Browser navigation for Kwami AI — use a real tab so any site works, including login.",
+  "permissions": [
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://localhost/*",
+    "https://localhost/*",
+    "http://127.0.0.1/*",
+    "https://127.0.0.1/*",
+    "https://*.kwami.io/*",
+    "https://kwami.io/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost/*",
+        "https://localhost/*",
+        "http://127.0.0.1/*",
+        "https://127.0.0.1/*",
+        "https://*.kwami.io/*",
+        "https://kwami.io/*"
+      ],
+      "js": ["content-playground.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-nav.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
