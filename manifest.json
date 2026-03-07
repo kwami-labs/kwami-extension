@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Kwami Navigation",
   "version": "1.0.0",
-  "description": "Browser navigation for Kwami AI — use a real tab so any site works, including login.",
+  "description": "Browser navigation for Kwami AI — use a real tab or side panel so any site works, including login.",
   "permissions": [
     "tabs",
     "scripting"
@@ -12,6 +12,8 @@
     "https://localhost/*",
     "http://127.0.0.1/*",
     "https://127.0.0.1/*",
+    "http://0.0.0.0/*",
+    "https://0.0.0.0/*",
     "https://*.kwami.io/*",
     "https://kwami.io/*",
     "<all_urls>"
@@ -26,6 +28,8 @@
         "https://localhost/*",
         "http://127.0.0.1/*",
         "https://127.0.0.1/*",
+        "http://0.0.0.0/*",
+        "https://0.0.0.0/*",
         "https://*.kwami.io/*",
         "https://kwami.io/*"
       ],

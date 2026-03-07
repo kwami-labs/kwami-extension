@@ -1,23 +1,48 @@
 /**
  * Kwami Navigation Extension — content script injected into the Kwami playground.
  * Bridges postMessage from the page to the extension and forwards extension messages to the page.
- * Injects a script into the page context so the app can see __KWAMI_EXTENSION__ (content script world is isolated).
  */
 
 const SOURCE = 'kwami-extension';
 
-(function () {
-  const injectPageFlag = () => {
-    const script = document.createElement('script');
-    script.textContent = 'window.__KWAMI_EXTENSION__ = true;';
-    (document.head || document.documentElement).appendChild(script);
-    script.remove();
-  };
-  if (document.documentElement) {
-    injectPageFlag();
-  } else {
-    document.addEventListener('DOMContentLoaded', injectPageFlag);
+function isContextValid() {
+  try {
+    return typeof chrome !== 'undefined' && !!chrome.runtime?.id;
+  } catch {
+    return false;
   }
+}
+
+function safeSendMessage(payload, callback) {
+  if (!isContextValid()) {
+    console.warn('[Kwami ext] Extension context invalidated — reload this page to restore navigation.');
+    window.postMessage({ source: SOURCE, type: 'kwami:ext_disconnected' }, '*');
+    return false;
+  }
+  try {
+    chrome.runtime.sendMessage(payload, (response) => {
+      try {
+        if (chrome.runtime?.lastError) {
+          console.warn('[Kwami ext] sendMessage error:', chrome.runtime.lastError.message);
+          return;
+        }
+        if (typeof callback === 'function') callback(response);
+      } catch (_) {}
+    });
+    return true;
+  } catch (e) {
+    console.warn('[Kwami ext] sendMessage failed:', e);
+    return false;
+  }
+}
+
+(function () {
+  if (!isContextValid()) {
+    console.warn('[Kwami ext] Content script loaded but extension context is invalid — reload this page.');
+    return;
+  }
+
+  console.info('[Kwami ext] Navigation bridge active.');
 
   window.addEventListener('message', (event) => {
     if (event.source !== window) return;
@@ -25,24 +50,32 @@ const SOURCE = 'kwami-extension';
     if (!data || data.source !== 'kwami-playground') return;
     if (data.type !== 'kwami:nav_command') return;
 
-    chrome.runtime.sendMessage(
+    var sent = safeSendMessage(
       { source: 'kwami-playground', type: data.type, detail: data.detail },
       (response) => {
-        if (chrome.runtime.lastError) return;
         if (data.detail?.callbackId && response != null) {
           window.postMessage({ source: SOURCE, type: 'kwami:ext_callback', callbackId: data.detail.callbackId, response }, '*');
         }
       }
     );
+    if (!sent) {
+      console.error('[Kwami ext] Failed to forward nav command to extension. Reload this page after reloading the extension.');
+    }
   });
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message.source !== SOURCE) {
-      sendResponse();
+  try {
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      try {
+        if (message.source !== SOURCE) {
+          sendResponse();
+          return false;
+        }
+        window.postMessage(message, '*');
+        sendResponse();
+      } catch (_) {
+        sendResponse();
+      }
       return false;
-    }
-    window.postMessage(message, '*');
-    sendResponse();
-    return false;
-  });
+    });
+  } catch (_) {}
 })();
