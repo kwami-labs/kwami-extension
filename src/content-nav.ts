@@ -3,15 +3,17 @@
  * Sends URL/title and page content to the background so the playground (and agent) stay in sync.
  */
 
-function isContextValid() {
+import { NavMessage } from './types';
+
+function isContextValid(): boolean {
   try {
-    return typeof chrome !== 'undefined' && chrome.runtime?.id;
+    return typeof chrome !== 'undefined' && !!chrome.runtime?.id;
   } catch {
     return false;
   }
 }
 
-function safeSendMessage(payload) {
+function safeSendMessage(payload: NavMessage) {
   if (!isContextValid()) return;
   try {
     // Omit callback so Chrome never invokes one after context may be invalidated.
@@ -45,13 +47,23 @@ function safeSendMessage(payload) {
   // Page content (with HTML and element ids) is requested by the background via executeScript
   // so the agent sees what the user sees and can click by element id.
 
-  var debounceTimer = null;
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   const observer = new MutationObserver(() => {
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(sendState, 1500);
   });
+  
   if (document.body) {
     observer.observe(document.body, { childList: true, subtree: true });
+  } else {
+    // Fallback if body is not ready yet
+    const bodyObserver = new MutationObserver(() => {
+      if (document.body) {
+        observer.observe(document.body, { childList: true, subtree: true });
+        bodyObserver.disconnect();
+      }
+    });
+    bodyObserver.observe(document.documentElement, { childList: true });
   }
 
   window.addEventListener('popstate', sendState);

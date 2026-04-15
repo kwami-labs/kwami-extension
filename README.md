@@ -6,16 +6,36 @@ Chrome/Edge extension for the Kwami playground. Uses a **real browser tab** for 
 - Sign-in and cookies work (same browser session)
 - Kwami can still navigate, click, type, and read the page via the extension
 
+## Development
+
+This extension is built with **TypeScript** and **Vite**.
+
+### Prerequisites
+- Node.js (v18+)
+- pnpm (Default package manager)
+
+### Setup
+```bash
+# Install dependencies
+pnpm install
+
+# Build the extension
+pnpm build
+
+# Development mode (with HMR)
+pnpm dev
+```
+
 ## Load in Chrome
 
 1. Open `chrome://extensions/`
 2. Enable **Developer mode**
 3. Click **Load unpacked**
-4. Select the `kwami-ai-ext` folder
+4. Select the `dist` folder generated after running `pnpm build`
 
 ## Usage
 
-1. Install the extension and open the Kwami playground (localhost or kwami.io).
+1. Build and load the extension, then open the Kwami playground (localhost or kwami.io).
 2. When you ask Kwami to open a URL, the extension opens (or reuses) a tab and keeps the playground in sync (URL, title, page content for the agent).
 3. Close the navigation tab or use “Close navigation” in the playground to stop.
 

@@ -3,9 +3,11 @@
  * Bridges postMessage from the page to the extension and forwards extension messages to the page.
  */
 
-const SOURCE = 'kwami-extension';
+import { NavMessage, KwamiSource } from './types';
 
-function isContextValid() {
+const SOURCE: KwamiSource = 'kwami-extension';
+
+function isContextValid(): boolean {
   try {
     return typeof chrome !== 'undefined' && !!chrome.runtime?.id;
   } catch {
@@ -13,7 +15,7 @@ function isContextValid() {
   }
 }
 
-function safeSendMessage(payload, callback) {
+function safeSendMessage(payload: NavMessage, callback?: (response: any) => void): boolean {
   if (!isContextValid()) {
     console.warn('[Kwami ext] Extension context invalidated — reload this page to restore navigation.');
     window.postMessage({ source: SOURCE, type: 'kwami:ext_disconnected' }, '*');
@@ -50,7 +52,7 @@ function safeSendMessage(payload, callback) {
     if (!data || data.source !== 'kwami-playground') return;
     if (data.type !== 'kwami:nav_command') return;
 
-    var sent = safeSendMessage(
+    const sent = safeSendMessage(
       { source: 'kwami-playground', type: data.type, detail: data.detail },
       (response) => {
         if (data.detail?.callbackId && response != null) {
@@ -64,7 +66,7 @@ function safeSendMessage(payload, callback) {
   });
 
   try {
-    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    chrome.runtime.onMessage.addListener((message: NavMessage, _sender, sendResponse) => {
       try {
         if (message.source !== SOURCE) {
           sendResponse();

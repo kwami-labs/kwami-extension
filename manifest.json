@@ -19,7 +19,7 @@
     "<all_urls>"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "src/background.ts"
   },
   "content_scripts": [
     {
@@ -33,12 +33,12 @@
         "https://*.kwami.io/*",
         "https://kwami.io/*"
       ],
-      "js": ["content-playground.js"],
+      "js": ["src/content-playground.ts"],
       "run_at": "document_start"
     },
     {
       "matches": ["<all_urls>"],
-      "js": ["content-nav.js"],
+      "js": ["src/content-nav.ts"],
       "run_at": "document_idle"
     }
   ]

@@ -3,6 +3,12 @@
  * Keeps one "navigation tab" and bridges messages between playground and that tab.
  */
 
+import { 
+  NavMessage, 
+  PageContentPayload, 
+  CommandResultPayload 
+} from './types';
+
 const KWAMI_PLAYGROUND_ORIGINS = [
   'http://localhost',
   'https://localhost',
@@ -14,9 +20,9 @@ const KWAMI_PLAYGROUND_ORIGINS = [
   'https://www.kwami.io',
 ];
 
-let navTabId = null;
+let navTabId: number | null = null;
 
-function isPlaygroundOrigin(url) {
+function isPlaygroundOrigin(url: string): boolean {
   try {
     const o = new URL(url).origin;
     return KWAMI_PLAYGROUND_ORIGINS.some((origin) => o === origin || o.startsWith(origin + ':') || o.endsWith('.kwami.io'));
@@ -25,7 +31,7 @@ function isPlaygroundOrigin(url) {
   }
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: NavMessage, sender, sendResponse) => {
   if (message.source !== 'kwami-playground' && message.source !== 'kwami-nav-tab') {
     sendResponse({ ok: false });
     return true;
@@ -48,14 +54,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-async function handlePlaygroundMessage(message, fromTabId) {
+async function handlePlaygroundMessage(message: NavMessage, fromTabId?: number): Promise<{ ok: boolean }> {
   const { type, detail } = message;
 
   if (type === 'kwami:nav_command') {
     const { action, url } = detail || {};
 
-    if (action === 'navigate' && url && typeof url === 'string') {
-      const targetUrl = url.trim().startsWith('http') ? url.trim() : 'https://' + url.trim();
+    if (action === 'navigate' && typeof url === 'string') {
+      const u = url.trim();
+      const targetUrl = u.startsWith('http') ? u : 'https://' + u;
       if (navTabId != null) {
         try {
           await chrome.tabs.get(navTabId);
@@ -65,33 +72,35 @@ async function handlePlaygroundMessage(message, fromTabId) {
         }
       }
       if (navTabId == null) {
-        let openerTab = null;
+        let openerTab: chrome.tabs.Tab | null = null;
         if (fromTabId != null) {
           try {
             openerTab = await chrome.tabs.get(fromTabId);
           } catch (_) {}
         }
-        const none = typeof chrome.tabs?.SPLIT_VIEW_ID_NONE === 'number' ? chrome.tabs.SPLIT_VIEW_ID_NONE : -1;
+        
+        // Handling split view if available (specific to some browsers/environments)
+        const none = (chrome.tabs as any)?.SPLIT_VIEW_ID_NONE ?? -1;
         const openerSplitViewId =
           openerTab &&
-          typeof openerTab.splitViewId === 'number' &&
-          openerTab.splitViewId !== none
-            ? openerTab.splitViewId
+          typeof (openerTab as any).splitViewId === 'number' &&
+          (openerTab as any).splitViewId !== none
+            ? (openerTab as any).splitViewId
             : null;
 
-        const createProps = { url: targetUrl, active: false };
+        const createProps: chrome.tabs.CreateProperties = { url: targetUrl, active: false };
         if (fromTabId != null) createProps.openerTabId = fromTabId;
         if (openerTab?.windowId != null) createProps.windowId = openerTab.windowId;
         if (openerTab?.index != null && typeof openerTab.index === 'number') {
           createProps.index = openerTab.index + 1;
         }
-        if (openerSplitViewId != null) createProps.splitViewId = openerSplitViewId;
+        if (openerSplitViewId != null) (createProps as any).splitViewId = openerSplitViewId;
 
-        let tab;
+        let tab: chrome.tabs.Tab | null;
         try {
           tab = await chrome.tabs.create(createProps);
         } catch (err) {
-          const fallback = { url: targetUrl, active: false };
+          const fallback: chrome.tabs.CreateProperties = { url: targetUrl, active: false };
           if (openerTab?.windowId != null) fallback.windowId = openerTab.windowId;
           if (openerTab?.index != null && typeof openerTab.index === 'number') {
             fallback.index = openerTab.index + 1;
@@ -110,12 +119,12 @@ async function handlePlaygroundMessage(message, fromTabId) {
           navTabId = tab.id;
           if (openerSplitViewId != null) {
             try {
-              await chrome.tabs.update(tab.id, { splitViewId: openerSplitViewId });
+              await chrome.tabs.update(tab.id, { splitViewId: openerSplitViewId } as any);
             } catch (_) {}
           }
         }
       }
-      await broadcastToPlayground({ type: 'kwami:ext_nav_state', url: targetUrl, title: '', isLoading: true });
+      await broadcastToPlayground({ type: 'kwami:ext_nav_state', url: targetUrl, title: '', isLoading: true } as NavMessage);
       return { ok: true };
     }
 
@@ -124,48 +133,47 @@ async function handlePlaygroundMessage(message, fromTabId) {
         return { ok: true };
       }
       try {
-        const tab = await chrome.tabs.get(navTabId);
+        await chrome.tabs.get(navTabId);
         if (action === 'close') {
           await chrome.tabs.remove(navTabId);
           navTabId = null;
-          await broadcastToPlayground({ type: 'kwami:ext_nav_ended' });
+          await broadcastToPlayground({ type: 'kwami:ext_nav_ended' } as NavMessage);
           return { ok: true };
         }
         await chrome.tabs.update(navTabId, { active: true });
         const results = await chrome.scripting.executeScript({
           target: { tabId: navTabId },
-          func: (dir) => {
+          func: (dir: string) => {
             if (dir === 'back') history.back();
             else if (dir === 'forward') history.forward();
           },
           args: [action === 'back' ? 'back' : 'forward'],
         });
-        return { ok: !results?.[0]?.error };
+        return { ok: !!results?.[0] };
       } catch {
         navTabId = null;
         return { ok: false };
       }
     }
 
-    if (['click', 'type', 'press_key', 'scroll', 'read_page'].includes(action)) {
+    if (action && ['click', 'type', 'press_key', 'scroll', 'read_page'].includes(action)) {
       if (navTabId == null) return { ok: false };
       try {
         const results = await chrome.scripting.executeScript({
           target: { tabId: navTabId },
           func: runNavCommandInPage,
           args: [
-            action,
-            detail?.description ?? '',
-            detail?.text ?? '',
-            detail?.elementId ?? detail?.element_id ?? '',
+            action as string,
+            (detail?.description ?? '') as string,
+            (detail?.text ?? '') as string,
+            (detail?.elementId ?? detail?.element_id ?? '') as string,
           ],
         });
-        const err = results?.[0]?.error;
-        const payload = err ? null : results?.[0]?.result;
+        const payload = results?.[0]?.result as CommandResultPayload | null;
         if (payload != null) {
-          await broadcastToPlayground({ type: 'kwami:ext_command_result', ...payload });
+          await broadcastToPlayground({ type: 'kwami:ext_command_result', ...payload } as NavMessage);
         }
-        return { ok: !err };
+        return { ok: !!results?.[0] };
       } catch (e) {
         return { ok: false };
       }
@@ -175,7 +183,7 @@ async function handlePlaygroundMessage(message, fromTabId) {
   return { ok: false };
 }
 
-async function requestAndBroadcastPageContent(tabId) {
+async function requestAndBroadcastPageContent(tabId: number) {
   if (tabId == null || navTabId !== tabId) return;
   try {
     const results = await chrome.scripting.executeScript({
@@ -183,53 +191,59 @@ async function requestAndBroadcastPageContent(tabId) {
       func: runNavCommandInPage,
       args: ['read_page', '', '', ''],
     });
-    const payload = results?.[0]?.result;
+    const payload = results?.[0]?.result as PageContentPayload;
     if (payload && typeof payload === 'object' && payload.title !== undefined) {
-      await broadcastToPlayground({ type: 'kwami:ext_page_content', title: payload.title, text: payload.text, elements: payload.elements || [], html: payload.html || '' });
+      await broadcastToPlayground({ 
+        type: 'kwami:ext_page_content', 
+        title: payload.title, 
+        text: payload.text, 
+        elements: payload.elements || [], 
+        html: payload.html || '' 
+      } as NavMessage);
     }
   } catch (_) {}
 }
 
-async function handleNavTabMessage(message, tabId) {
+async function handleNavTabMessage(message: NavMessage, tabId?: number): Promise<{ ok: boolean }> {
   const { type, url, title, content } = message;
 
   if (type === 'kwami:nav_tab_ready' && tabId != null && navTabId === tabId) {
-    await broadcastToPlayground({ type: 'kwami:ext_nav_state', url, title, isLoading: false });
-    setTimeout(function () { requestAndBroadcastPageContent(tabId); }, 1200);
+    await broadcastToPlayground({ type: 'kwami:ext_nav_state', url, title, isLoading: false } as NavMessage);
+    setTimeout(function () { if (tabId) requestAndBroadcastPageContent(tabId); }, 1200);
     return { ok: true };
   }
 
   if (type === 'kwami:nav_tab_state' && tabId === navTabId) {
-    await broadcastToPlayground({ type: 'kwami:ext_nav_state', url, title, isLoading: false });
-    setTimeout(function () { requestAndBroadcastPageContent(tabId); }, 800);
+    await broadcastToPlayground({ type: 'kwami:ext_nav_state', url, title, isLoading: false } as NavMessage);
+    if (tabId) setTimeout(function () { requestAndBroadcastPageContent(tabId); }, 800);
     return { ok: true };
   }
 
   if (type === 'kwami:nav_page_content' && tabId === navTabId && content) {
-    await broadcastToPlayground({ type: 'kwami:ext_page_content', ...content });
+    await broadcastToPlayground({ type: 'kwami:ext_page_content', ...content } as NavMessage);
     return { ok: true };
   }
 
   return { ok: true };
 }
 
-async function broadcastToPlayground(payload) {
+async function broadcastToPlayground(payload: NavMessage) {
   const tabs = await chrome.tabs.query({});
   for (const tab of tabs) {
     if (tab.id == null || tab.url == null) continue;
     if (!isPlaygroundOrigin(tab.url)) continue;
     try {
-      await chrome.tabs.sendMessage(tab.id, { source: 'kwami-extension', ...payload });
+      await chrome.tabs.sendMessage(tab.id, { ...payload, source: 'kwami-extension' });
     } catch {
       // Tab may not have content script ready
     }
   }
 }
 
-chrome.tabs.onRemoved.addListener((removedTabId) => {
+chrome.tabs.onRemoved.addListener((removedTabId: number) => {
   if (removedTabId === navTabId) {
     navTabId = null;
-    broadcastToPlayground({ type: 'kwami:ext_nav_ended' });
+    broadcastToPlayground({ type: 'kwami:ext_nav_ended' } as NavMessage);
   }
 });
 
@@ -237,19 +251,19 @@ chrome.tabs.onRemoved.addListener((removedTabId) => {
  * Injected into the nav tab to run commands. Must be a function that gets stringified.
  * Generic so it works on any website: broad selectors, rich labels (aria, id, class, name).
  */
-function runNavCommandInPage(action, description, text, elementId) {
+function runNavCommandInPage(action: string, description: string, text: string, elementId: string) {
   const doc = document;
   const body = doc.body;
   if (!body) return null;
   elementId = elementId || '';
 
-  function getLabel(el) {
+  function getLabel(el: HTMLElement | SVGElement): string {
     const t = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 200);
     if (t) return t;
     const aria = (el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || '').trim();
     if (aria) return aria;
     if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-      const n = (el.name || el.type || '').trim();
+      const n = ((el as HTMLInputElement).name || (el as HTMLInputElement).type || '').trim();
       if (n) return n;
     }
     const id = (el.id || '').trim().replace(/[-_]+/g, ' ').replace(/^[^a-z0-9]+/i, '').slice(0, 50);
@@ -277,12 +291,12 @@ function runNavCommandInPage(action, description, text, elementId) {
     // Clear previous stamps
     try { doc.querySelectorAll('[data-kwami-id]').forEach(function (el) { el.removeAttribute('data-kwami-id'); }); } catch (_) {}
     const main = doc.querySelector('main, article, [role="main"], .content, #content') || body;
-    const textContent = (main.innerText || '').slice(0, 5000);
-    const items = [];
+    const textContent = ((main as HTMLElement).innerText || '').slice(0, 5000);
+    const items: any[] = [];
     try {
       doc.querySelectorAll(clickableSelector).forEach(function (el, i) {
         if (i >= 80) return;
-        var label = getLabel(el);
+        var label = getLabel(el as HTMLElement);
         var eid = 'el-' + i;
         el.setAttribute('data-kwami-id', eid);
         if (label) items.push({ id: eid, type: el.tagName.toLowerCase(), label: label.slice(0, 80), index: i });
@@ -290,7 +304,7 @@ function runNavCommandInPage(action, description, text, elementId) {
     } catch (e) {}
     var html = '';
     try {
-      var clone = main.cloneNode(true);
+      var clone = main.cloneNode(true) as HTMLElement;
       var toRemove = clone.querySelectorAll('script, style, noscript, iframe');
       for (var r = 0; r < toRemove.length; r++) toRemove[r].remove();
       html = clone.innerHTML.replace(/\s+/g, ' ').trim().slice(0, 18000);
@@ -305,7 +319,7 @@ function runNavCommandInPage(action, description, text, elementId) {
   }
 
   if (action === 'press_key') {
-    var KEY_CODES = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8, Delete: 46, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39, Space: 32, Home: 36, End: 35, PageUp: 33, PageDown: 34 };
+    var KEY_CODES: Record<string, number> = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8, Delete: 46, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39, Space: 32, Home: 36, End: 35, PageUp: 33, PageDown: 34 };
     var key = (text || description || 'Enter').trim() || 'Enter';
     var kc = KEY_CODES[key] || key.charCodeAt(0);
     var target = doc.activeElement || body;
@@ -314,9 +328,9 @@ function runNavCommandInPage(action, description, text, elementId) {
     target.dispatchEvent(new KeyboardEvent('keypress', evtOpts));
     target.dispatchEvent(new KeyboardEvent('keyup', evtOpts));
     if (key === 'Enter' && target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
-      var form = target.closest('form');
+      var form = (target as HTMLElement).closest('form');
       if (form) {
-        if (typeof form.requestSubmit === 'function') form.requestSubmit();
+        if (typeof (form as any).requestSubmit === 'function') (form as any).requestSubmit();
         else form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
       }
     }
@@ -333,12 +347,12 @@ function runNavCommandInPage(action, description, text, elementId) {
     else if (ord === 'second' || ord === '2nd' || ord === '2') ordinalIndex = 1;
     else if (ord === 'third' || ord === '3rd' || ord === '3') ordinalIndex = 2;
   }
-  const candidates = [];
+  const candidates: any[] = [];
   const maxCandidates = 250;
   try {
     doc.querySelectorAll(clickableSelector).forEach(function (el, i) {
       if (candidates.length >= maxCandidates) return;
-      var label = getLabel(el);
+      var label = getLabel(el as HTMLElement);
       if (!label) return;
       var lower = label.toLowerCase();
       var score = 0;
@@ -354,17 +368,18 @@ function runNavCommandInPage(action, description, text, elementId) {
       if (score > 0) candidates.push({ el: el, label: label.slice(0, 80), score: score, index: i });
     });
   } catch (e) {}
-  function isVisible(el) {
-    const style = doc.defaultView.getComputedStyle(el);
+  function isVisible(el: HTMLElement): boolean {
+    const style = doc.defaultView?.getComputedStyle(el);
+    if (!style) return false;
     if (style.visibility === 'hidden' || style.display === 'none' || style.pointerEvents === 'none') return false;
     const r = el.getBoundingClientRect();
     return r.width > 0 && r.height > 0;
   }
-  const visible = candidates.filter(function (c) { return isVisible(c.el); });
+  const visible = candidates.filter(function (c) { return isVisible(c.el as HTMLElement); });
   const sorted = (visible.length ? visible : candidates).sort((a, b) => (b.score - a.score) || (a.index - b.index));
   const pick = sorted.length === 0 ? null : sorted[Math.min(ordinalIndex, sorted.length - 1)];
 
-  function doClick(el) {
+  function doClick(el: HTMLElement) {
     el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
     var rect = el.getBoundingClientRect();
     var x = rect.left + rect.width / 2;
@@ -372,12 +387,12 @@ function runNavCommandInPage(action, description, text, elementId) {
     el.focus();
     var opts = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, detail: 1 };
     var order = ['pointerdown', 'mousedown', 'mouseup', 'pointerup', 'click'];
-    if (typeof PointerEvent === 'undefined') order = ['mousedown', 'mouseup', 'click'];
+    // PointerEvent might not be available in all environments, though modern Chrome has it
     for (var i = 0; i < order.length; i++) {
       var name = order[i];
       var ev = name.indexOf('pointer') === 0 && typeof PointerEvent !== 'undefined'
         ? new PointerEvent(name, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' })
-        : new MouseEvent(name, opts);
+        : new MouseEvent(name, opts as MouseEventInit);
       el.dispatchEvent(ev);
     }
   }
@@ -386,16 +401,16 @@ function runNavCommandInPage(action, description, text, elementId) {
     var byId = String(elementId || '').match(/^el-(\d+)$/);
     if (byId) {
       // Prefer stable data-kwami-id attribute set during read_page
-      var stamped = doc.querySelector('[data-kwami-id="' + elementId + '"]');
+      var stamped = doc.querySelector('[data-kwami-id="' + elementId + '"]') as HTMLElement;
       if (stamped) {
         doClick(stamped);
         return { result: 'ok' };
       }
       // Fallback to index-based lookup
       var idx = parseInt(byId[1], 10);
-      var all = [];
+      var all: HTMLElement[] = [];
       try {
-        doc.querySelectorAll(clickableSelector).forEach(function (el) { all.push(el); });
+        doc.querySelectorAll(clickableSelector).forEach(function (el) { all.push(el as HTMLElement); });
       } catch (e) {}
       if (idx >= 0 && idx < all.length) {
         doClick(all[idx]);
@@ -403,31 +418,31 @@ function runNavCommandInPage(action, description, text, elementId) {
       }
     }
     if (pick?.el) {
-      doClick(pick.el);
+      doClick(pick.el as HTMLElement);
       return { result: 'ok' };
     }
     return { result: 'not_found' };
   }
 
   if (action === 'type') {
-    var input = null;
+    var input: HTMLElement | null = null;
     // Priority 1: element_id (same as click)
     var typeById = String(elementId || '').match(/^el-(\d+)$/);
     if (typeById) {
-      var found = doc.querySelector('[data-kwami-id="' + elementId + '"]');
+      var found = doc.querySelector('[data-kwami-id="' + elementId + '"]') as HTMLElement;
       if (!found) {
         var typeIdx = parseInt(typeById[1], 10);
-        var typeAll = [];
-        try { doc.querySelectorAll(clickableSelector).forEach(function (el) { typeAll.push(el); }); } catch (e) {}
+        var typeAll: HTMLElement[] = [];
+        try { doc.querySelectorAll(clickableSelector).forEach(function (el) { typeAll.push(el as HTMLElement); }); } catch (e) {}
         if (typeIdx >= 0 && typeIdx < typeAll.length) found = typeAll[typeIdx];
       }
       if (found) input = found;
     }
     // Priority 2: fuzzy match from description
-    if (!input && pick?.el) input = pick.el;
+    if (!input && pick?.el) input = pick.el as HTMLElement;
     // Priority 3: currently focused element
     if (!input) {
-      var active = doc.activeElement;
+      var active = doc.activeElement as HTMLElement;
       if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {
         input = active;
       }
@@ -437,12 +452,11 @@ function runNavCommandInPage(action, description, text, elementId) {
     if (input.tagName === 'INPUT' || input.tagName === 'TEXTAREA') {
       input.focus();
       input.click();
-      var newValue = clearFirst ? (text || '') : (input.value || '') + (text || '');
-      var nativeSet = Object.getOwnPropertyDescriptor(
-        input.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype, 'value'
-      )?.set;
+      var newValue = clearFirst ? (text || '') : ((input as HTMLInputElement).value || '') + (text || '');
+      var prototype = input.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+      var nativeSet = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
       if (nativeSet) nativeSet.call(input, newValue);
-      else input.value = newValue;
+      else (input as HTMLInputElement).value = newValue;
       input.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text || '' }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
       input.dispatchEvent(new Event('blur', { bubbles: true }));
@@ -453,8 +467,8 @@ function runNavCommandInPage(action, description, text, elementId) {
       input.focus();
       input.click();
       if (clearFirst) {
-        doc.execCommand('selectAll', false, null);
-        doc.execCommand('delete', false, null);
+        doc.execCommand('selectAll', false, undefined);
+        doc.execCommand('delete', false, undefined);
       }
       doc.execCommand('insertText', false, text || '');
       return { result: 'ok' };
