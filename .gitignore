@@ -22,3 +22,8 @@ Thumbs.db
 
 # TypeScript
 *.tsbuildinfo
+
+# Environment. `.env` is tracked and encrypted with git-crypt.
+# `.env.*` stays ignored; `.env.example` stays plaintext.
+.env.*
+!.env.example

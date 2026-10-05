@@ -26,6 +26,10 @@ pnpm build
 pnpm dev
 ```
 
+## Environment
+
+This repo has no `.env` today. A future `.env` is tracked with git-crypt: the blob in git is ciphertext and the working tree is plaintext after unlock. On a new machine, install git-crypt and run `git-crypt unlock ~/.config/git-crypt/kwami.io/kwami-extension.key` once. Plaintext `.env.*` overrides stay gitignored. The key file is not committed.
+
 ## Load in Chrome
 
 1. Open `chrome://extensions/`
